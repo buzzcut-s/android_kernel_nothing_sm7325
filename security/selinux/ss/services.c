@@ -2133,8 +2133,16 @@ static void selinux_policy_free(struct selinux_policy *policy)
 	kfree(policy);
 }
 
-static void selinux_policy_commit(struct selinux_state *state,
-				struct selinux_policy *newpolicy)
+void selinux_policy_cancel(struct selinux_state *state,
+			struct selinux_policy *policy)
+{
+
+	sidtab_cancel_convert(&state->ss->policy->sidtab);
+	selinux_policy_free(policy);
+}
+
+void selinux_policy_commit(struct selinux_state *state,
+			struct selinux_policy *newpolicy)
 {
 	struct selinux_policy *oldpolicy;
 	u32 seqno;
@@ -2195,7 +2203,8 @@ static void selinux_policy_commit(struct selinux_state *state,
  * This function will flush the access vector cache after
  * loading the new policy.
  */
-int security_load_policy(struct selinux_state *state, void *data, size_t len)
+int security_load_policy(struct selinux_state *state, void *data, size_t len,
+			struct selinux_policy **newpolicyp)
 {
 	struct selinux_policy *newpolicy;
 	struct sidtab_convert_params convert_params;
@@ -2226,7 +2235,7 @@ int security_load_policy(struct selinux_state *state, void *data, size_t len)
 
 	if (!selinux_initialized(state)) {
 		/* First policy load, so no need to preserve state from old policy */
-		selinux_policy_commit(state, newpolicy);
+		*newpolicyp = newpolicy;
 		return 0;
 	}
 
@@ -2262,7 +2271,7 @@ int security_load_policy(struct selinux_state *state, void *data, size_t len)
 		goto err;
 	}
 
-	selinux_policy_commit(state, newpolicy);
+	*newpolicyp = newpolicy;
 	return 0;
 err:
 	selinux_policy_free(newpolicy);
@@ -2718,17 +2727,15 @@ out:
  * Obtain a SID to use for a file in a filesystem that
  * cannot support xattr or use a fixed labeling behavior like
  * transition SIDs or task SIDs.
- *
- * The caller must acquire the policy_rwlock before calling this function.
  */
-static inline int __security_genfs_sid(struct selinux_state *state,
+static inline int __security_genfs_sid(struct selinux_policy *policy,
 				       const char *fstype,
 				       char *path,
 				       u16 orig_sclass,
 				       u32 *sid)
 {
-	struct policydb *policydb = &state->ss->policy->policydb;
-	struct sidtab *sidtab = &state->ss->policy->sidtab;
+	struct policydb *policydb = &policy->policydb;
+	struct sidtab *sidtab = &policy->sidtab;
 	int len;
 	u16 sclass;
 	struct genfs *genfs;
@@ -2738,7 +2745,7 @@ static inline int __security_genfs_sid(struct selinux_state *state,
 	while (path[0] == '/' && path[1] == '/')
 		path++;
 
-	sclass = unmap_class(&state->ss->policy->map, orig_sclass);
+	sclass = unmap_class(&policy->map, orig_sclass);
 	*sid = SECINITSID_UNLABELED;
 
 	for (genfs = policydb->genfs; genfs; genfs = genfs->next) {
@@ -2782,9 +2789,20 @@ int security_genfs_sid(struct selinux_state *state,
 	int retval;
 
 	read_lock(&state->ss->policy_rwlock);
-	retval = __security_genfs_sid(state, fstype, path, orig_sclass, sid);
+	retval = __security_genfs_sid(state->ss->policy,
+				fstype, path, orig_sclass, sid);
 	read_unlock(&state->ss->policy_rwlock);
 	return retval;
+}
+
+int selinux_policy_genfs_sid(struct selinux_policy *policy,
+			const char *fstype,
+			char *path,
+			u16 orig_sclass,
+			u32 *sid)
+{
+	/* no lock required, policy is not yet accessible by other threads */
+	return __security_genfs_sid(policy, fstype, path, orig_sclass, sid);
 }
 
 /**
@@ -2822,8 +2840,8 @@ retry:
 		if (rc)
 			goto out;
 	} else {
-		rc = __security_genfs_sid(state, fstype, "/", SECCLASS_DIR,
-					  &sbsec->sid);
+		rc = __security_genfs_sid(state->ss->policy, fstype, "/",
+					SECCLASS_DIR, &sbsec->sid);
 		if (rc) {
 			sbsec->behavior = SECURITY_FS_USE_NONE;
 			rc = 0;
@@ -2837,23 +2855,14 @@ out:
 	return rc;
 }
 
-int security_get_bools(struct selinux_state *state,
+int security_get_bools(struct selinux_policy *policy,
 		       u32 *len, char ***names, int **values)
 {
 	struct policydb *policydb;
 	u32 i;
 	int rc;
 
-	if (!selinux_initialized(state)) {
-		*len = 0;
-		*names = NULL;
-		*values = NULL;
-		return 0;
-	}
-
-	read_lock(&state->ss->policy_rwlock);
-
-	policydb = &state->ss->policy->policydb;
+	policydb = &policy->policydb;
 
 	*names = NULL;
 	*values = NULL;
@@ -2884,7 +2893,6 @@ int security_get_bools(struct selinux_state *state,
 	}
 	rc = 0;
 out:
-	read_unlock(&state->ss->policy_rwlock);
 	return rc;
 err:
 	if (*names) {
@@ -2977,7 +2985,9 @@ static int security_preserve_bools(struct selinux_state *state,
 	struct cond_bool_datum *booldatum;
 	u32 i, nbools = 0;
 
-	rc = security_get_bools(state, &nbools, &bnames, &bvalues);
+	read_lock(&state->ss->policy_rwlock);
+	rc = security_get_bools(state->ss->policy, &nbools, &bnames, &bvalues);
+	read_unlock(&state->ss->policy_rwlock);
 	if (rc)
 		goto out;
 	for (i = 0; i < nbools; i++) {
@@ -3188,21 +3198,13 @@ static int get_classes_callback(void *k, void *d, void *args)
 	return 0;
 }
 
-int security_get_classes(struct selinux_state *state,
+int security_get_classes(struct selinux_policy *policy,
 			 char ***classes, int *nclasses)
 {
 	struct policydb *policydb;
 	int rc;
 
-	if (!selinux_initialized(state)) {
-		*nclasses = 0;
-		*classes = NULL;
-		return 0;
-	}
-
-	read_lock(&state->ss->policy_rwlock);
-
-	policydb = &state->ss->policy->policydb;
+	policydb = &policy->policydb;
 
 	rc = -ENOMEM;
 	*nclasses = policydb->p_classes.nprim;
@@ -3220,7 +3222,6 @@ int security_get_classes(struct selinux_state *state,
 	}
 
 out:
-	read_unlock(&state->ss->policy_rwlock);
 	return rc;
 }
 
@@ -3237,16 +3238,14 @@ static int get_permissions_callback(void *k, void *d, void *args)
 	return 0;
 }
 
-int security_get_permissions(struct selinux_state *state,
+int security_get_permissions(struct selinux_policy *policy,
 			     char *class, char ***perms, int *nperms)
 {
 	struct policydb *policydb;
 	int rc, i;
 	struct class_datum *match;
 
-	read_lock(&state->ss->policy_rwlock);
-
-	policydb = &state->ss->policy->policydb;
+	policydb = &policy->policydb;
 
 	rc = -EINVAL;
 	match = symtab_search(&policydb->p_classes, class);
@@ -3275,11 +3274,9 @@ int security_get_permissions(struct selinux_state *state,
 		goto err;
 
 out:
-	read_unlock(&state->ss->policy_rwlock);
 	return rc;
 
 err:
-	read_unlock(&state->ss->policy_rwlock);
 	for (i = 0; i < *nperms; i++)
 		kfree((*perms)[i]);
 	kfree(*perms);

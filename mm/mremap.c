@@ -395,8 +395,7 @@ static unsigned long get_extent(enum pgt_entry entry, unsigned long old_addr,
  */
 static bool move_pgt_entry(enum pgt_entry entry, struct vm_area_struct *vma,
 			unsigned long old_addr, unsigned long new_addr,
-			unsigned long old_end, void *old_entry,
-			void *new_entry, bool need_rmap_locks)
+			void *old_entry, void *new_entry, bool need_rmap_locks)
 {
 	bool moved = false;
 
@@ -406,8 +405,8 @@ static bool move_pgt_entry(enum pgt_entry entry, struct vm_area_struct *vma,
 
 	switch (entry) {
 	case NORMAL_PMD:
-		moved = move_normal_pmd(vma, old_addr, new_addr, old_end,
-					old_entry, new_entry);
+		moved = move_normal_pmd(vma, old_addr, new_addr, old_entry,
+					new_entry);
 		break;
 	case NORMAL_PUD:
 		moved = move_normal_pud(vma, old_addr, new_addr, old_entry,
@@ -415,8 +414,8 @@ static bool move_pgt_entry(enum pgt_entry entry, struct vm_area_struct *vma,
 		break;
 	case HPAGE_PMD:
 		moved = IS_ENABLED(CONFIG_TRANSPARENT_HUGEPAGE) &&
-			move_huge_pmd(vma, old_addr, new_addr, old_end,
-					old_entry, new_entry);
+			move_huge_pmd(vma, old_addr, new_addr, old_entry,
+				      new_entry);
 		break;
 	default:
 		WARN_ON_ONCE(1);
@@ -465,8 +464,7 @@ unsigned long move_page_tables(struct vm_area_struct *vma,
 			if (!new_pud)
 				break;
 			if (move_pgt_entry(NORMAL_PUD, vma, old_addr, new_addr,
-						old_end, old_pud, new_pud,
-						true))
+					   old_pud, new_pud, true))
 				continue;
 		}
 
@@ -481,20 +479,19 @@ unsigned long move_page_tables(struct vm_area_struct *vma,
 		    pmd_devmap(*old_pmd)) {
 			if (extent == HPAGE_PMD_SIZE &&
 			    move_pgt_entry(HPAGE_PMD, vma, old_addr, new_addr,
-				    old_end, old_pmd, new_pmd, need_rmap_locks))
+					   old_pmd, new_pmd, true))
 				continue;
 			split_huge_pmd(vma, old_pmd, old_addr);
 			if (pmd_trans_unstable(old_pmd))
 				continue;
-			} else if (IS_ENABLED(CONFIG_HAVE_MOVE_PMD) &&
+		} else if (IS_ENABLED(CONFIG_HAVE_MOVE_PMD) &&
 			   extent == PMD_SIZE) {
 			/*
 			 * If the extent is PMD-sized, try to speed the move by
 			 * moving at the PMD level if possible.
 			 */
 			if (move_pgt_entry(NORMAL_PMD, vma, old_addr, new_addr,
-						old_end, old_pmd, new_pmd,
-						true))
+					   old_pmd, new_pmd, true))
 				continue;
 		}
 

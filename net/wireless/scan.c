@@ -385,10 +385,7 @@ cfg80211_add_nontrans_list(struct cfg80211_bss *trans_bss,
 		}
 	}
 
-	rcu_read_unlock();
-
-	/*
-	 * This is a bit weird - it's not on the list, but already on another
+	/* This is a bit weird - it's not on the list, but already on another
 	 * one! The only way that could happen is if there's some BSSID/SSID
 	 * shared by multiple APs in their multi-BSSID profiles, potentially
 	 * with hidden SSID mixed in ... ignore it.
@@ -1482,7 +1479,6 @@ cfg80211_inform_single_bss_data(struct wiphy *wiphy,
 				res = NULL;
 			}
 		}
-		spin_unlock_bh(&rdev->bss_lock);
 
 		if (!res)
 			return NULL;

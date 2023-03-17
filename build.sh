@@ -44,7 +44,7 @@ if test -z "$(git rev-parse --show-cdup 2>/dev/null)" &&
    head=$(git rev-parse --verify HEAD 2>/dev/null); then
         ZIPNAME="${ZIPNAME::-4}-$(echo $head | cut -c1-8).zip"
 fi
-CLANG_DIR="$TC_DIR/clang-r475365b"
+CLANG_DIR="$TC_DIR/clang-r458507"
 AK3_DIR="$HOME/AnyKernel3"
 DEFCONFIG="spacewar_defconfig"
 
@@ -71,8 +71,8 @@ mkdir -p out
 make $MAKE_PARAMS $DEFCONFIG
 
 echo -e "\nStarting compilation...\n"
-make -j4 $MAKE_PARAMS || exit $?
-make -j4 $MAKE_PARAMS INSTALL_MOD_PATH=modules INSTALL_MOD_STRIP=1 modules_install
+make -j$(nproc --all) $MAKE_PARAMS || exit $?
+make -j$(nproc --all) $MAKE_PARAMS INSTALL_MOD_PATH=modules INSTALL_MOD_STRIP=1 modules_install
 
 kernel="out/arch/arm64/boot/Image"
 dts_dir="out/arch/arm64/boot/dts/vendor/qcom"

@@ -7,6 +7,7 @@
 #include <linux/delay.h>
 #include <linux/errno.h>
 #include <linux/fs.h>
+#include <linux/syscalls.h>
 #include <linux/init.h>
 #include <linux/input.h>
 #include <linux/interrupt.h>

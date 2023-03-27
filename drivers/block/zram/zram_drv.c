@@ -35,8 +35,10 @@
 #include <linux/sysfs.h>
 #include <linux/debugfs.h>
 #include <linux/cpuhotplug.h>
+#ifdef CONFIG_ZRAM_WRITEBACK
 #include <linux/input.h>
 #include <linux/power_supply.h>
+#endif
 
 #include "zram_drv.h"
 
@@ -58,6 +60,7 @@ static size_t huge_class_size;
 static const struct block_device_operations zram_devops;
 static const struct block_device_operations zram_wb_devops;
 
+#ifdef CONFIG_ZRAM_WRITEBACK
 static bool screen_on = true;
 static unsigned long long total_touch_clock;
 module_param(total_touch_clock, ullong, 0644);
@@ -81,6 +84,7 @@ static int wb_start_mins = 240;
 module_param(wb_start_mins, int, 0644);
 
 static struct work_struct zram_wb_fb_worker;
+#endif
 
 static void zram_free_page(struct zram *zram, size_t index);
 static int zram_bvec_read(struct zram *zram, struct bio_vec *bvec,
@@ -708,10 +712,12 @@ next:
 		free_block_bdev(zram, blk_idx);
 	__free_page(page);
 release_init_lock:
+#ifdef CONFIG_ZRAM_WRITEBACK
 	pr_info("writeback: C: %llu MiB, R: %llu MiB, W: %llu MiB\n",
 			FOUR_K((u64)atomic64_read(&zram->stats.bd_count)) / 256,
 			FOUR_K((u64)atomic64_read(&zram->stats.bd_reads)) / 256,
 			FOUR_K((u64)atomic64_read(&zram->stats.bd_writes)) / 256);
+#endif
 
 	up_read(&zram->init_lock);
 
@@ -1591,6 +1597,7 @@ static int zram_bvec_rw(struct zram *zram, struct bio_vec *bvec, u32 index,
 	return ret;
 }
 
+#ifdef CONFIG_ZRAM_WRITEBACK
 static void zram_wb_input_event(struct input_handle *handle,
 		unsigned int type, unsigned int code, int value)
 {
@@ -1739,6 +1746,7 @@ static void __exit destroy_zram_wb(void)
 	input_unregister_handler(&zram_wb_input_handler);
 	wakeup_source_unregister(zram_wb_wakelock);
 }
+#endif
 
 static void __zram_make_request(struct zram *zram, struct bio *bio)
 {
@@ -2326,7 +2334,9 @@ static int __init zram_init(void)
 		num_devices--;
 	}
 
+#ifdef CONFIG_ZRAM_WRITEBACK
 	init_zram_wb();
+#endif
 
 	return 0;
 
@@ -2337,7 +2347,9 @@ out_error:
 
 static void __exit zram_exit(void)
 {
+#ifdef CONFIG_ZRAM_WRITEBACK
 	destroy_zram_wb();
+#endif
 	destroy_devices();
 }
 

@@ -811,7 +811,11 @@ static void zram_debugfs_destroy(void)
 static void zram_accessed(struct zram *zram, u32 index)
 {
 	zram_clear_flag(zram, index, ZRAM_IDLE);
+#ifdef CONFIG_ZRAM_WRITEBACK
 	zram->table[index].ac_time = total_touch_clock;
+#else
+    zram->table[index].ac_time = ktime_get_boottime();
+#endif
 }
 
 static ssize_t read_block_state(struct file *file, char __user *buf,

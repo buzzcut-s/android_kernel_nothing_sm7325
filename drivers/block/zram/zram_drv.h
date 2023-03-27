@@ -73,7 +73,11 @@ struct zram_table_entry {
 		unsigned long element;
 	};
 	unsigned long flags;
+#ifdef CONFIG_ZRAM_WRITEBACK
 	unsigned long long ac_time;
+#else
+    ktime_t ac_time;
+#endif
 };
 
 struct zram_stats {

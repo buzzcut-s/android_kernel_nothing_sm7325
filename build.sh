@@ -22,36 +22,22 @@ while true; do
     shift
 done
 
-# Setup HOME dir
-if [ $HOME_DIR ]; then
-    HOME_DIR=$HOME_DIR
-else
-    HOME_DIR=$HOME
-fi
-echo -e "HOME directory is at $HOME_DIR\n"
-
-# Setup Toolchain dir
-if [ $TC_DIR ]; then
-    TC_DIR="$HOME_DIR/$TC_DIR"
-else
-    TC_DIR="$HOME_DIR/tc"
-fi
-echo -e "Toolchain directory is at $TC_DIR\n"
-
 SECONDS=0 # builtin bash timer
-ZIPNAME="nethunter-spacewar-$(date '+%Y%m%d-%H%M').zip"
+ZIPNAME="bz-spacewar-$(date '+%Y%m%d-%H%M').zip"
 if test -z "$(git rev-parse --show-cdup 2>/dev/null)" &&
    head=$(git rev-parse --verify HEAD 2>/dev/null); then
         ZIPNAME="${ZIPNAME::-4}-$(echo $head | cut -c1-8).zip"
 fi
-CLANG_DIR="$TC_DIR/linux-x86/clang-r487747c"
-AK3_DIR="$HOME/AnyKernel3"
+
+TC_DIR="/home/piyush/NP1/llvm-16.0.5"
+LLVM_PATH="/home/piyush/NP1/llvm-16.0.6/bin/"
+
 DEFCONFIG="spacewar_defconfig"
 
 MAKE_PARAMS="O=out ARCH=arm64 CC=clang CLANG_TRIPLE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 \
-	CROSS_COMPILE=$TC_DIR/bin/llvm-"
+	CROSS_COMPILE=$TC_DIR/bin/llvm- LLVM_PATH=/home/piyush/NP1/llvm-16.0.0/bin/"
 
-export PATH="$CLANG_DIR/bin:$PATH"
+export PATH="$TC_DIR/bin:$PATH"
 
 # Regenerate defconfig, if requested so
 if [ "$FLAG_REGEN_DEFCONFIG" = 'y' ]; then
@@ -71,30 +57,24 @@ mkdir -p out
 make $MAKE_PARAMS $DEFCONFIG
 
 echo -e "\nStarting compilation...\n"
-make -j$(nproc --all) $MAKE_PARAMS || exit $?
-make -j$(nproc --all) $MAKE_PARAMS INSTALL_MOD_PATH=modules INSTALL_MOD_STRIP=1 modules_install
+make -j23 $MAKE_PARAMS || exit $?
+make -j23 $MAKE_PARAMS INSTALL_MOD_PATH=modules INSTALL_MOD_STRIP=1 modules_install
 
 kernel="out/arch/arm64/boot/Image"
 dts_dir="out/arch/arm64/boot/dts/vendor/qcom"
 
 if [ -f "$kernel" ] && [ -d "$dts_dir" ]; then
 	echo -e "\nKernel compiled succesfully! Zipping up...\n"
-	if [ -d "$AK3_DIR" ]; then
-		cp -r $AK3_DIR AnyKernel3
-		git checkout spacewar &> /dev/null
-	elif ! git clone https://github.com/kimocoder/AnyKernel3 -b spacewar; then
-		echo -e "\nAnyKernel3 repo not found locally and couldn't clone from GitHub! Aborting..."
-		exit 1
-	fi
+	git clone https://github.com/buzzcut-s/AnyKernel3
 	cp $kernel AnyKernel3
 	cat $dts_dir/*.dtb > AnyKernel3/dtb
-	python2 scripts/dtc/libfdt/mkdtboimg.py create AnyKernel3/dtbo.img --page_size=4096 $dts_dir/*.dtbo
-	mkdir AnyKernel3/modules/vendor/lib/modules/5.4.242-NetHunter/
+	python scripts/dtc/libfdt/mkdtboimg.py create AnyKernel3/dtbo.img --page_size=4096 $dts_dir/*.dtbo
+	mkdir AnyKernel3/modules/vendor/lib/modules/5.4.242-bz/
 	#cp $(find $OUT_DIR/modules/lib/modules/5.4* -name '*.ko') AnyKernel3/modules/vendor/lib/modules/
-	cp out/modules/lib/modules/5.4*/modules.{alias,dep,softdep} AnyKernel3/modules/vendor/lib/modules/5.4.242-NetHunter/
-	cp out/modules/lib/modules/5.4*/modules.order AnyKernel3/modules/vendor/lib/modules/5.4.242-NetHunter/modules.load
-	cp out/modules/lib/modules/5.4.*/modules.* AnyKernel3/modules/vendor/lib/modules/5.4.242-NetHunter/
-	sed -i 's/\(kernel\/[^: ]*\/\)\([^: ]*\.ko\)/\/vendor\/lib\/modules\/\2/g' AnyKernel3/modules/vendor/lib/modules/5.4.242-NetHunter/modules.dep
+	cp out/modules/lib/modules/5.4*/modules.{alias,dep,softdep} AnyKernel3/modules/vendor/lib/modules/5.4.242-bz/
+	cp out/modules/lib/modules/5.4*/modules.order AnyKernel3/modules/vendor/lib/modules/5.4.242-bz/modules.load
+	cp out/modules/lib/modules/5.4.*/modules.* AnyKernel3/modules/vendor/lib/modules/5.4.242-bz/
+	sed -i 's/\(kernel\/[^: ]*\/\)\([^: ]*\.ko\)/\/vendor\/lib\/modules\/\2/g' AnyKernel3/modules/vendor/lib/modules/5.4.242-bz/modules.dep
 	#sed -i 's/.*\///g' AnyKernel3/modules/vendor/lib/modules/5.4.*/modules.load
 	rm -rf out/arch/arm64/boot out/modules
 	cd AnyKernel3

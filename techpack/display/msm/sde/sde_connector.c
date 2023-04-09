@@ -20,10 +20,12 @@
 #include "sde_vm.h"
 #include <drm/drm_probe_helper.h>
 
+#include "sde_trace.h"
+
 #define BL_NODE_NAME_SIZE 32
 #define HDR10_PLUS_VSIF_TYPE_CODE      0x81
-int rm692e5_hbm_flag = 0;
-extern int rm692e5_aod_flag;
+int finger_hbm_flag = 0;
+int hbm_mode_flag = 0;
 
 /* Autorefresh will occur after FRAME_CNT frames. Large values are unlikely */
 #define AUTOREFRESH_MAX_FRAME_CNT 6
@@ -128,7 +130,8 @@ static int sde_backlight_device_update_status(struct backlight_device *bd)
 	display->panel->bl_config.real_bl_level = bl_lvl;
 
 	/*if enable hbm_mode, set brightness to HBM brightness*/
-	if (rm692e5_hbm_flag) {
+	if (finger_hbm_flag || hbm_mode_flag) {
+		SDE_ERROR("update hbm brightness\n");
 		bl_lvl = display->panel->bl_config.bl_hbm_level;
 	}
 
@@ -825,6 +828,76 @@ static int _sde_connector_update_dirty_properties(
 	return 0;
 }
 
+static int _sde_connector_update_finger_hbm_status(
+				struct drm_connector *connector)
+{
+	bool status;
+	struct sde_connector *c_conn;
+	struct sde_connector_state *c_state;
+	struct dsi_display * display;
+
+	if (!connector) {
+		SDE_ERROR("invalid argument\n");
+		return -EINVAL;
+	}
+
+	c_conn = to_sde_connector(connector);
+	c_state = to_sde_connector_state(connector->state);
+
+	display = (struct dsi_display *) c_conn->display;
+	if (!display || !display->panel) {
+		SDE_ERROR("Invalid params(s) dsi_display %pK, panel %pK\n",
+					display, ((display) ? display->panel : NULL));
+		return -EINVAL;
+	}
+
+	status = sde_crtc_is_fod_enabled(connector->state->crtc->state);
+	if (status == dsi_panel_get_fod_ui(display->panel)) {
+		return 0;
+	}
+
+	if (status && display->panel->cur_mode->timing.refresh_rate >= 120) {
+		sde_encoder_wait_for_event(c_conn->encoder, MSM_ENC_VBLANK);
+	}
+
+	if (display->panel->power_mode == SDE_MODE_DPMS_OFF) {
+		SDE_ERROR("panel in power off\n");
+		return 0;
+	}
+
+	SDE_ATRACE_BEGIN("_sde_connector_update_finger_hbm_statuss");
+	finger_hbm_flag = status;
+	if (finger_hbm_flag) {
+		SDE_ERROR("open hbm");
+		if ((c_conn->lp_mode == SDE_MODE_DPMS_LP1) ||
+			(c_conn->lp_mode == SDE_MODE_DPMS_LP2)) {
+			mutex_lock(&c_conn->lock);
+			c_conn->ops.set_power(connector, SDE_MODE_DPMS_ON, display);
+			mutex_unlock(&c_conn->lock);
+			c_conn->last_panel_power_mode = SDE_MODE_DPMS_ON;
+		}
+		sde_backlight_device_update_status(c_conn->bl_device);
+		/*wait for VBLANK */
+		sde_encoder_wait_for_event(c_conn->encoder, MSM_ENC_VBLANK);
+	} else {
+		SDE_ERROR("close hbm");
+		sde_backlight_device_update_status(c_conn->bl_device);
+		/*wait for VBLANK */
+		sde_encoder_wait_for_event(c_conn->encoder, MSM_ENC_VBLANK);
+		if ((c_conn->lp_mode == SDE_MODE_DPMS_LP1) ||
+			(c_conn->lp_mode == SDE_MODE_DPMS_LP2)) {
+			mutex_lock(&c_conn->lock);
+			c_conn->ops.set_power(connector, c_conn->lp_mode, display);
+			mutex_unlock(&c_conn->lock);
+			c_conn->last_panel_power_mode = c_conn->lp_mode;
+		}
+	}
+
+	dsi_panel_set_fod_ui(display->panel, finger_hbm_flag);
+	SDE_ATRACE_END("_sde_connector_update_finger_hbm_statuss");
+	return 0;
+}
+
 struct sde_connector_dyn_hdr_metadata *sde_connector_get_dyn_hdr_meta(
 		struct drm_connector *connector)
 {
@@ -835,56 +908,6 @@ struct sde_connector_dyn_hdr_metadata *sde_connector_get_dyn_hdr_meta(
 
 	c_state = to_sde_connector_state(connector->state);
 	return &c_state->dyn_hdr_meta;
-}
-
-static bool sde_connector_is_fod_enabled(struct sde_connector *c_conn)
-{
-	struct drm_connector *connector = &c_conn->base;
-
-	if (!connector->state || !connector->state->crtc)
-		return false;
-
-	return sde_crtc_is_fod_enabled(connector->state->crtc->state);
-}
-
-struct dsi_panel *sde_connector_panel(struct sde_connector *c_conn)
-{
-	struct dsi_display *display = (struct dsi_display *)c_conn->display;
-
-	return display ? display->panel : NULL;
-}
-
-static void sde_connector_pre_update_fod_hbm(struct sde_connector *c_conn)
-{
-	struct dsi_panel *panel;
-	u32 refresh_rate;
-	bool status;
-
-	panel = sde_connector_panel(c_conn);
-	if (!panel)
-		return;
-
-	mutex_lock(&panel->panel_lock);
-	refresh_rate = panel->cur_mode->timing.refresh_rate;
-	mutex_unlock(&panel->panel_lock);
-
-	status = sde_connector_is_fod_enabled(c_conn);
-	if (status == dsi_panel_get_fod_ui(panel))
-		return;
-
-	if (status && refresh_rate >= 120)
-		sde_encoder_wait_for_event(c_conn->encoder, MSM_ENC_VBLANK);
-
-	if (status) {
-		rm692e5_hbm_flag = 1;
-	} else {
-		rm692e5_hbm_flag = 0;
-	}
-	sde_backlight_device_update_status(c_conn->bl_device);
-
-	sde_encoder_wait_for_event(c_conn->encoder, MSM_ENC_VBLANK);
-
-	dsi_panel_set_fod_ui(panel, status);
 }
 
 int sde_connector_pre_kickoff(struct drm_connector *connector)
@@ -924,6 +947,14 @@ int sde_connector_pre_kickoff(struct drm_connector *connector)
 		goto end;
 	}
 
+	if (c_conn->connector_type == DRM_MODE_CONNECTOR_DSI) {
+		//only dsi panel need open hbm
+		rc = _sde_connector_update_finger_hbm_status(connector);
+		if (rc) {
+			SDE_ERROR("update hbm status failed\n");
+		}
+	}
+
 	if (!c_conn->ops.pre_kickoff)
 		return 0;
 
@@ -931,9 +962,6 @@ int sde_connector_pre_kickoff(struct drm_connector *connector)
 	params.hdr_meta = &c_state->hdr_meta;
 
 	SDE_EVT32_VERBOSE(connector->base.id);
-
-	if (c_conn->connector_type == DRM_MODE_CONNECTOR_DSI)
-		sde_connector_pre_update_fod_hbm(c_conn);
 
 	rc = c_conn->ops.pre_kickoff(connector, c_conn->display, &params);
 
@@ -2964,40 +2992,38 @@ static ssize_t hbm_mode_store(struct device *device,
 {
 	int rc = 0;
 	unsigned long hbm_mode;
-	struct sde_connector *sde_conn;
 	struct drm_connector *conn;
-	struct dsi_display *dsi_display;
+	struct sde_connector *sde_conn;
 
 	conn = dev_get_drvdata(device);
+	if (!conn) {
+		SDE_ERROR("invalid argument\n");
+		return count;
+	}
 	sde_conn = to_sde_connector(conn);
-	dsi_display = (struct dsi_display *) sde_conn->display;
+	if(sde_conn->connector_type != DRM_MODE_CONNECTOR_DSI) {
+		SDE_ERROR("invalid argument\n");
+		return count;
+	}
 
 	rc = kstrtoul(buf, 0, &hbm_mode);
 	if (rc)
 		return rc;
 
-	if (hbm_mode) {
-		if (rm692e5_aod_flag == 1) {
-			dsi_panel_set_nolp(dsi_display->panel);
-		}
-		rm692e5_hbm_flag = 1;
-	}
-	else {
-		if (rm692e5_aod_flag == 1) {
-			dsi_panel_set_lp1(dsi_display->panel);
-		}
-		rm692e5_hbm_flag = 0;
-	}
+	if (hbm_mode)
+		hbm_mode_flag = 1;
+	else
+		hbm_mode_flag = 0;
 
 	sde_backlight_device_update_status(sde_conn->bl_device);
 
-	return rc ? rc : count;
+	return count;
 }
 
 static ssize_t hbm_mode_show(struct device *device,
 	struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf, "%d\n", rm692e5_hbm_flag);
+	return sprintf(buf, "%d\n", hbm_mode_flag);
 }
 
 static ssize_t tx_cmd_store(struct device *device,

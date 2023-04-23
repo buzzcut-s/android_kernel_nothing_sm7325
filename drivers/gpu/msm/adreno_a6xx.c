@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2017-2021, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2023 Qualcomm Innovation Center, Inc. All rights reserved.
  */
 
 #include <linux/clk/qcom.h>
@@ -92,7 +93,7 @@ static u32 a6xx_ifpc_pwrup_reglist[] = {
 	A6XX_CP_AHB_CNTL,
 };
 
-/* Applicable to a620, a642, a642l, a650 and a660 */
+/* Applicable to a620, a642l, a650 and a660 */
 static u32 a650_ifpc_pwrup_reglist[] = {
 	A6XX_CP_PROTECT_REG+32,
 	A6XX_CP_PROTECT_REG+33,
